@@ -6,13 +6,19 @@ This file creates your application.
 """
 
 from app.models import *
-from flask import render_template, request, jsonify, send_file
+from flask import make_response, render_template, request, jsonify, send_file, g
 from fileinput import filename
 import psycopg2
 import os
 from app import app, db, ma
 from flask import render_template, request, redirect, url_for, flash
 from werkzeug.utils import secure_filename
+
+# Using JWT
+import jwt
+from flask import _request_ctx_stack
+from functools import wraps
+import datetime
 
 #Schemas
 class UserSchema(ma.Schema):
@@ -36,6 +42,42 @@ class FavSchema(ma.Schema):
 
 fav_schema = FavSchema()
 favs_schema = FavSchema(many=True)
+
+
+
+# Create a JWT @requires_auth decorator
+# This decorator can be used to denote that a specific route should check
+# for a valid JWT token before displaying the contents of that route.
+def requires_auth(f):
+  @wraps(f)
+  def decorated(*args, **kwargs):
+    auth = request.headers.get('Authorization', None) # or request.cookies.get('token', None) 
+
+    if not auth:
+      return jsonify({'code': 'authorization_header_missing', 'description': 'Authorization header is expected'}), 401
+
+    parts = auth.split()
+
+    if parts[0].lower() != 'bearer':
+      return jsonify({'code': 'invalid_header', 'description': 'Authorization header must start with Bearer'}), 401
+    elif len(parts) == 1:
+      return jsonify({'code': 'invalid_header', 'description': 'Token not found'}), 401
+    elif len(parts) > 2:
+      return jsonify({'code': 'invalid_header', 'description': 'Authorization header must be Bearer + \s + token'}), 401
+
+    token = parts[1]
+    try:
+        payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+
+    except jwt.ExpiredSignatureError:
+        return jsonify({'code': 'token_expired', 'description': 'token is expired'}), 401
+    except jwt.DecodeError:
+        return jsonify({'code': 'token_invalid_signature', 'description': 'Token signature is invalid'}), 401
+
+    g.current_user = user = payload
+    return f(*args, **kwargs)
+
+  return decorated
 
 ###
 # Routing for your application.
@@ -64,15 +106,27 @@ def register():
 def login():
     username = request.json['username']
     password = request.json['password']
-    return jsonify(username = username, password = password)
+
+    payload = {
+        'username': username,
+        'password': password
+    }
+    token = jwt.encode(payload, app.config['SECRET_KEY'], algorithm='HS256')
+
+    resp= make_response(jsonify(message="Login Successful", token = token, ))
+    resp.set_cookie('token', "Bearer " + token, httponly=True, secure=True)
+    return resp
+
 
 
 @app.route('/api/auth/logout', methods=['POST'])
+@requires_auth
 def logout():
     message = "Log out successful"
     return jsonify(message = message)
 
 @app.route('/api/cars', methods=['POST'])
+@requires_auth
 def create_car():
     description = request.json['description']
     make = request.json['make']
@@ -91,6 +145,7 @@ def create_car():
     return car_schema.jsonify(cars)
 
 @app.route('/api/cars', methods=['GET'])
+@requires_auth
 def view_cars():
     all_cars = Cars.query.all()
     results = cars_schema.dump(all_cars)
@@ -98,11 +153,13 @@ def view_cars():
 
 
 @app.route('/api/cars/<car_id>', methods=['GET'])
+@requires_auth
 def view_car(car_id):
     car = Cars.query.get(car_id)
     return car_schema.jsonify(car)
 
 @app.route('/api/cars/<car_id>/favourite', methods=['POST'])
+@requires_auth
 def add_fav(car_id):
     message = "Car Successfully Favourited"
     car_id = request.json['car_id']
@@ -115,6 +172,7 @@ def add_fav(car_id):
 
 
 @app.route('/api/search', methods=['GET'])
+@requires_auth
 def search():
     make = request.args.get('make')
     model = request.args.get('model')
@@ -123,11 +181,13 @@ def search():
 
 
 @app.route('/api/users/<user_id>', methods=['GET'])
+@requires_auth
 def get_user(user_id):
     user = Users.query.get(user_id)
     return user_schema.jsonify(user)
 
 @app.route('/api/users/<user_id>/favourites', methods=['GET'])
+@requires_auth
 def get_fav(user_id):
     fav = Favourites.query.filter_by(user_id = user_id)
     return favs_schema.jsonify(fav)

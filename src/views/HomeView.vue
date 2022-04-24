@@ -2,7 +2,7 @@
 export default {
     data() {
         return {
-            message: "Hello World! This is Lab 7"
+            message: "Hello World! This is Project 2"
         };
     },
 }
