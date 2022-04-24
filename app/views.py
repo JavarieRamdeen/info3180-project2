@@ -5,10 +5,37 @@ Werkzeug Documentation:  https://werkzeug.palletsprojects.com/
 This file creates your application.
 """
 
-from app import app
+from app.models import *
 from flask import render_template, request, jsonify, send_file
+from fileinput import filename
+import psycopg2
 import os
+from app import app, db, ma
+from flask import render_template, request, redirect, url_for, flash
+from werkzeug.utils import secure_filename
 
+#Schemas
+class UserSchema(ma.Schema):
+    class Meta:
+        fields = ('id', 'username', 'password', 'name', 'email', 'location', 'biography', 'photo', 'date_joined')
+
+user_schema = UserSchema()
+users_schema = UserSchema(many=True)
+
+
+class CarSchema(ma.Schema):
+    class Meta:
+        fields = ('id', 'description', 'make', 'model', 'colour', 'year', 'transmission', 'car_type', 'price', 'photo', 'user_id')
+
+car_schema = CarSchema()
+cars_schema = CarSchema(many=True)
+
+class FavSchema(ma.Schema):
+    class Meta:
+        fields = ('id', 'car_id', 'user_id')
+
+fav_schema = FavSchema()
+favs_schema = FavSchema(many=True)
 
 ###
 # Routing for your application.
@@ -17,6 +44,93 @@ import os
 @app.route('/')
 def index():
     return jsonify(message="This is the beginning of our API")
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    username = request.json['username']
+    password = request.json['password']
+    name = request.json['name']
+    email = request.json['email']
+    location = request.json['location']
+    biography = request.json['biography']
+    photo = request.json['photo']
+    
+    users = Users(username, password, name, email, location, biography, photo)
+    db.session.add(users)
+    db.session.commit()
+    return user_schema.jsonify(users)
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    username = request.json['username']
+    password = request.json['password']
+    return jsonify(username = username, password = password)
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    message = "Log out successful"
+    return jsonify(message = message)
+
+@app.route('/api/cars', methods=['POST'])
+def create_car():
+    description = request.json['description']
+    make = request.json['make']
+    model = request.json['model']
+    colour = request.json['colour']
+    year = request.json['year']
+    transmission = request.json['transmission']
+    car_type = request.json['car_type']
+    price = request.json['price']
+    photo = request.json['photo']
+    user_id = request.json['user_id']
+
+    cars = Cars(description, make, model, colour, year, transmission, car_type, price, photo, user_id)
+    db.session.add(cars)
+    db.session.commit()
+    return car_schema.jsonify(cars)
+
+@app.route('/api/cars', methods=['GET'])
+def view_cars():
+    all_cars = Cars.query.all()
+    results = cars_schema.dump(all_cars)
+    return jsonify(results)
+
+
+@app.route('/api/cars/<car_id>', methods=['GET'])
+def view_car(car_id):
+    car = Cars.query.get(car_id)
+    return car_schema.jsonify(car)
+
+@app.route('/api/cars/<car_id>/favourite', methods=['POST'])
+def add_fav(car_id):
+    message = "Car Successfully Favourited"
+    car_id = request.json['car_id']
+    user_id = request.json['user_id']
+
+    fav = Favourites(car_id, user_id)
+    db.session.add(fav)
+    db.session.commit()
+    return jsonify(message = message, car_id = car_id)
+
+
+@app.route('/api/search', methods=['GET'])
+def search():
+    make = request.args.get('make')
+    model = request.args.get('model')
+    car = Cars.query.filter_by(make = make, model = model)
+    return cars_schema.jsonify(car)
+
+
+@app.route('/api/users/<user_id>', methods=['GET'])
+def get_user(user_id):
+    user = Users.query.get(user_id)
+    return user_schema.jsonify(user)
+
+@app.route('/api/users/<user_id>/favourites', methods=['GET'])
+def get_fav(user_id):
+    fav = Favourites.query.filter_by(user_id = user_id)
+    return favs_schema.jsonify(fav)
 
 
 ###
